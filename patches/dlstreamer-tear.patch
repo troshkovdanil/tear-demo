@@ -1,0 +1,55 @@
+diff --git a/src/monolithic/gst/inference_elements/base/inference_impl.cpp b/src/monolithic/gst/inference_elements/base/inference_impl.cpp
+index 8581acb..ff3b0a3 100644
+--- a/src/monolithic/gst/inference_elements/base/inference_impl.cpp
++++ b/src/monolithic/gst/inference_elements/base/inference_impl.cpp
+@@ -1319,6 +1319,33 @@ GstFlowReturn InferenceImpl::TransformFrameIp(GvaBaseInference *gva_base_inferen
+     assert(gva_base_inference->info != nullptr && "Expected a valid pointer to GstVideoInfo");
+     assert(buffer != nullptr && "Expected a valid pointer to GstBuffer");
+ 
++    /* TEAR-DEMO */
++    {
++        ++tear_input_frame_count;
++
++        if (!tear_power_save_active &&
++            tear_input_frame_count >= TEAR_POWER_SAVE_TRANSITION_FRAME) {
++            tear_power_save_active = true;
++
++            GST_WARNING_OBJECT(
++                gva_base_inference,
++                "[TEAR] POWER_SAVE profile activated at frame "
++                "%" G_GUINT64_FORMAT
++                ": processing one of every %" G_GUINT64_FORMAT " frames",
++                static_cast<guint64>(tear_input_frame_count),
++                static_cast<guint64>(TEAR_POWER_SAVE_FRAME_INTERVAL));
++        }
++
++        if (tear_power_save_active) {
++            const std::uint64_t tear_profile_frame =
++                tear_input_frame_count - TEAR_POWER_SAVE_TRANSITION_FRAME;
++
++            if ((tear_profile_frame % TEAR_POWER_SAVE_FRAME_INTERVAL) != 0) {
++                return GST_BASE_TRANSFORM_FLOW_DROPPED;
++            }
++        }
++    }
++
+     // Shallow copy input buffer instead of increasing ref count
+     buffer = gst_buffer_copy(buffer);
+     // Unref buffer automatically on early exit
+diff --git a/src/monolithic/gst/inference_elements/base/inference_impl.h b/src/monolithic/gst/inference_elements/base/inference_impl.h
+index 01ca148..1fc871e 100644
+--- a/src/monolithic/gst/inference_elements/base/inference_impl.h
++++ b/src/monolithic/gst/inference_elements/base/inference_impl.h
+@@ -82,6 +82,12 @@ class InferenceImpl {
+     Model model;
+     std::shared_ptr<InferenceBackend::Allocator> allocator;
+ 
++    /* TEAR-DEMO */
++    static constexpr std::uint64_t TEAR_POWER_SAVE_TRANSITION_FRAME = 300;
++    static constexpr std::uint64_t TEAR_POWER_SAVE_FRAME_INTERVAL = 10;
++    std::uint64_t tear_input_frame_count = 0;
++    bool tear_power_save_active = false;
++
+     struct OutputFrame {
+         GstBuffer *buffer;
+         uint64_t inference_count;
