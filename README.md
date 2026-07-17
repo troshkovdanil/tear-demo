@@ -6,7 +6,9 @@ Reproducible TEAR demonstrations and experiments
 
 Build and run:
 
-./scripts/demo.sh /path/to/model-directory
+```
+./scripts/demo.sh
+```
 
 Expected output:
 
