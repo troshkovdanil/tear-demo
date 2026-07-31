@@ -45,7 +45,7 @@ index 01ca148..1fc871e 100644
      std::shared_ptr<InferenceBackend::Allocator> allocator;
  
 +    /* TEAR-DEMO */
-+    static constexpr std::uint64_t TEAR_POWER_SAVE_TRANSITION_FRAME = 300;
++    static constexpr std::uint64_t TEAR_POWER_SAVE_TRANSITION_FRAME = 30;
 +    static constexpr std::uint64_t TEAR_POWER_SAVE_FRAME_INTERVAL = 10;
 +    std::uint64_t tear_input_frame_count = 0;
 +    bool tear_power_save_active = false;

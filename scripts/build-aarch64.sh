@@ -302,9 +302,9 @@ if [[ "${APPLY_PATCH}" == "1" ]]; then
 
     PATCH_APPLIED="true"
 
-    grep -q 'TEAR_POWER_SAVE_TRANSITION_FRAME = 300' \
+    grep -q 'TEAR_POWER_SAVE_TRANSITION_FRAME = 30' \
         "${DLSTREAMER_DIR}/src/monolithic/gst/inference_elements/base/inference_impl.h" ||
-        fatal "The patch does not configure the production transition at frame 300"
+        fatal "The patch does not configure the production transition at frame 30"
 
     grep -q 'GST_BASE_TRANSFORM_FLOW_DROPPED' \
         "${DLSTREAMER_DIR}/src/monolithic/gst/inference_elements/base/inference_impl.cpp" ||
