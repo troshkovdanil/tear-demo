@@ -24,7 +24,7 @@ DEMO_EXPECTED_RENDERED="${DEMO_EXPECTED_RENDERED:-57}"
 
 RESET_RUNTIME=0
 REBUILD_QEMU=0
-RUN_QEMU=0
+RUN_QEMU=1
 
 info() { printf '[INFO] %s\n' "$*"; }
 warn() { printf '[WARN] %s\n' "$*" >&2; }
@@ -34,16 +34,16 @@ usage()
 {
     cat <<USAGE
 Usage:
-  $0 [--reset-runtime] [--rebuild-qemu] [--run-qemu]
+  $0 [--reset-runtime] [--rebuild-qemu] [--skip-run-qemu]
 
 Options:
   --reset-runtime  Re-export the cached AArch64 runtime.
   --rebuild-qemu   Rebuild OP-TEE QEMU/Buildroot images.
-  --run-qemu       Boot QEMU and run the complete guest demo automatically.
+  --skip-run-qemu  Do not boot QEMU and run the complete guest demo automatically.
   -h, --help       Show this help.
 
 Complete run:
-  $0 --rebuild-qemu --run-qemu
+  $0 --rebuild-qemu --skip-run-qemu
 
 Environment:
   IMAGE_NAME=${IMAGE_NAME}
@@ -67,7 +67,7 @@ while (($#)); do
     case "$1" in
         --reset-runtime) RESET_RUNTIME=1 ;;
         --rebuild-qemu) REBUILD_QEMU=1 ;;
-        --run-qemu) RUN_QEMU=1 ;;
+        --skip-run-qemu) RUN_QEMU=0 ;;
         -h|--help) usage; exit 0 ;;
         *) fatal "Unknown option: $1" ;;
     esac
@@ -536,5 +536,5 @@ printf '\n'
 info "Completed"
 if [[ "${RUN_QEMU}" != "1" ]]; then
     info "Complete automated run:"
-    info "  $0 --rebuild-qemu --run-qemu"
+    info "  $0 --reset-runtime --rebuild-qemu"
 fi
