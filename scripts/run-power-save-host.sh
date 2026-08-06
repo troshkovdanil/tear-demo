@@ -44,7 +44,7 @@ DEVICE="${DEVICE:-CPU}"
 RESET_RUNTIME="${RESET_RUNTIME:-0}"
 REBUILD="${REBUILD:-0}"
 
-EXPECTED_MARKER="[TEAR] POWER_SAVE profile activated at frame 300"
+EXPECTED_MARKER="[TEAR] POWER_SAVE profile activated at frame 30"
 
 MODEL_BASE_URL="$(
     printf '%s' \
@@ -420,7 +420,7 @@ info "  Model:       ${MODEL_DIR}/model.xml"
 info "  Device:      ${DEVICE}"
 info "  Input:       ${INPUT_FPS} FPS"
 info "  Buffers:     ${NUM_BUFFERS}"
-info "  Transition:  frame 300"
+info "  Transition:  frame 30"
 info "  Log:         ${LOG_FILE}"
 
 printf '\n'
@@ -462,7 +462,7 @@ fi
 
 printf '\n'
 info "PASS: exported DL Streamer runtime works directly on the host"
-info "PASS: POWER_SAVE enforcement activated at frame 300"
+info "PASS: POWER_SAVE enforcement activated at frame 30"
 info "PASS: host inference pipeline completed successfully"
 info "Log saved to:"
 info "  ${LOG_FILE}"
