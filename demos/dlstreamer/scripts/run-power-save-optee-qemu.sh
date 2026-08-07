@@ -22,57 +22,11 @@ DEMO_GST_DEBUG="${DEMO_GST_DEBUG:-3}"
 DEMO_EXPECTED_TRANSITION_FRAME="${DEMO_EXPECTED_TRANSITION_FRAME:-30}"
 DEMO_EXPECTED_RENDERED="${DEMO_EXPECTED_RENDERED:-57}"
 
-RESET_RUNTIME=0
-REBUILD_QEMU=0
-RUN_QEMU=1
-
 info() { printf '[INFO] %s\n' "$*"; }
 warn() { printf '[WARN] %s\n' "$*" >&2; }
 fatal() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
 
-usage()
-{
-    cat <<USAGE
-Usage:
-  $0 [--reset-runtime] [--rebuild-qemu] [--skip-run-qemu]
-
-Options:
-  --reset-runtime  Re-export the cached AArch64 runtime.
-  --rebuild-qemu   Rebuild OP-TEE QEMU/Buildroot images.
-  --skip-run-qemu  Do not boot QEMU and run the complete guest demo automatically.
-  -h, --help       Show this help.
-
-Complete run:
-  $0 --rebuild-qemu --skip-run-qemu
-
-Environment:
-  IMAGE_NAME=${IMAGE_NAME}
-  OPTEE_QEMU_DIR=${OPTEE_QEMU_DIR}
-  TARGET=${TARGET}
-  RUNTIME_ROOT=${RUNTIME_ROOT}
-  MODELS_SOURCE=${MODELS_SOURCE}
-  BUILD_JOBS=${BUILD_JOBS}
-  QEMU_MEMORY_MB=${QEMU_MEMORY_MB}
-  QEMU_SMP=${QEMU_SMP}
-  QEMU_LOG=${QEMU_LOG}
-  DEMO_FRAMES=${DEMO_FRAMES}
-  DEMO_FRAMERATE=${DEMO_FRAMERATE}
-  DEMO_GST_DEBUG=${DEMO_GST_DEBUG}
-  DEMO_EXPECTED_TRANSITION_FRAME=${DEMO_EXPECTED_TRANSITION_FRAME}
-  DEMO_EXPECTED_RENDERED=${DEMO_EXPECTED_RENDERED}
-USAGE
-}
-
-while (($#)); do
-    case "$1" in
-        --reset-runtime) RESET_RUNTIME=1 ;;
-        --rebuild-qemu) REBUILD_QEMU=1 ;;
-        --skip-run-qemu) RUN_QEMU=0 ;;
-        -h|--help) usage; exit 0 ;;
-        *) fatal "Unknown option: $1" ;;
-    esac
-    shift
-done
+[[ "$#" -eq 0 ]] || fatal "This script takes no command-line options"
 
 for name in BUILD_JOBS QEMU_MEMORY_MB QEMU_SMP DEMO_FRAMES \
             DEMO_GST_DEBUG DEMO_EXPECTED_TRANSITION_FRAME \
@@ -508,33 +462,13 @@ run_qemu()
     info "TEAR OP-TEE QEMU demo PASSED"
 }
 
-if [[ "${RESET_RUNTIME}" == "1" ]]; then
-    info "Removing cached runtime: ${RUNTIME_ROOT}"
-    rm -rf "${RUNTIME_ROOT}"
-fi
+info "Removing cached runtime: ${RUNTIME_ROOT}"
+rm -rf "${RUNTIME_ROOT}"
 
-if [[ ! -x "${RUNTIME_ROOT}/opt/tear/gstreamer/bin/gst-launch-1.0" ]]; then
-    export_runtime
-else
-    info "Using cached runtime: ${RUNTIME_ROOT}"
-fi
-
+export_runtime
 install_runtime
-
-if [[ "${REBUILD_QEMU}" == "1" ]]; then
-    rebuild_qemu
-else
-    info "QEMU image was not rebuilt"
-fi
-
-if [[ "${RUN_QEMU}" == "1" ]]; then
-    [[ "${REBUILD_QEMU}" == "1" ]] || warn "Running the currently built QEMU image"
-    run_qemu
-fi
+rebuild_qemu
+run_qemu
 
 printf '\n'
 info "Completed"
-if [[ "${RUN_QEMU}" != "1" ]]; then
-    info "Complete automated run:"
-    info "  $0 --reset-runtime --rebuild-qemu"
-fi
