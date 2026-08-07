@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd)"
 
 IMAGE_NAME="${IMAGE_NAME:-tear-demo-dlstreamer:2026.1-aarch64}"
+EDGE_AI_COMMIT="${EDGE_AI_COMMIT:-5ce5aa03c2fec59dd2e2bbde2153c30a5925b531}"
 OPTEE_QEMU_DIR="${OPTEE_QEMU_DIR:-${REPO_ROOT}/third_party/optee-qemu-v8}"
 TARGET="${TARGET:-${OPTEE_QEMU_DIR}/out-br/target}"
 RUNTIME_ROOT="${RUNTIME_ROOT:-${REPO_ROOT}/out/aarch64/qemu-runtime}"
@@ -45,7 +46,10 @@ docker info >/dev/null 2>&1 || fatal "Docker daemon is not accessible"
 docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1 || fatal "Docker image is missing: ${IMAGE_NAME}"
 [[ -d "${OPTEE_QEMU_DIR}" ]] || fatal "OP-TEE QEMU directory is missing: ${OPTEE_QEMU_DIR}"
 [[ -d "${TARGET}" ]] || fatal "Buildroot target directory is missing: ${TARGET}"
-[[ -d "${MODELS_SOURCE}" ]] || fatal "Model source directory is missing: ${MODELS_SOURCE}"
+
+MODEL_DIR="${MODELS_SOURCE}/pallet_defect_detection" \
+EDGE_AI_COMMIT="${EDGE_AI_COMMIT}" \
+    "${SCRIPT_DIR}/download-pallet-model.sh"
 
 copy_tree()
 {

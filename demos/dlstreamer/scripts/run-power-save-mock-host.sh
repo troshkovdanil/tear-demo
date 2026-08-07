@@ -4,13 +4,13 @@
 # POWER_SAVE test directly on the x86-64 host.
 #
 # Usage:
-#   ./scripts/run-power-save-host.sh
+#   ./scripts/run-power-save-mock-host.sh
 #
 # Force runtime re-export:
-#   RESET_RUNTIME=1 ./scripts/run-power-save-host.sh
+#   RESET_RUNTIME=1 ./scripts/run-power-save-mock-host.sh
 #
 # Rebuild the Docker image first:
-#   REBUILD=1 ./scripts/run-power-save-host.sh
+#   REBUILD=1 ./scripts/run-power-save-mock-host.sh
 #
 
 set -Eeuo pipefail
@@ -46,13 +46,6 @@ REBUILD="${REBUILD:-0}"
 
 EXPECTED_MARKER="[TEAR] POWER_SAVE profile activated at frame 30"
 
-MODEL_BASE_URL="$(
-    printf '%s' \
-        "https://raw.githubusercontent.com/open-edge-platform/edge-ai-libraries" \
-        "/${EDGE_AI_COMMIT}" \
-        "/microservices/dlstreamer-pipeline-server/resources/models/geti" \
-        "/pallet_defect_detection/deployment/Detection/model"
-)"
 
 info()
 {
@@ -73,44 +66,6 @@ run()
     "$@"
 }
 
-download_file()
-{
-    local filename="$1"
-    local destination="${MODEL_DIR}/${filename}"
-    local temporary="${destination}.tmp"
-    local url="${MODEL_BASE_URL}/${filename}"
-
-    if [[ -s "${destination}" ]]; then
-        info "Using cached model file: ${destination}"
-        return 0
-    fi
-
-    info "Downloading ${filename}"
-
-    rm -f "${temporary}"
-
-    if command -v curl >/dev/null 2>&1; then
-        curl \
-            --fail \
-            --location \
-            --retry 3 \
-            --retry-delay 2 \
-            --output "${temporary}" \
-            "${url}"
-    elif command -v wget >/dev/null 2>&1; then
-        wget \
-            --tries=3 \
-            --output-document="${temporary}" \
-            "${url}"
-    else
-        fatal "Neither curl nor wget is available"
-    fi
-
-    [[ -s "${temporary}" ]] ||
-        fatal "Downloaded file is empty: ${filename}"
-
-    mv "${temporary}" "${destination}"
-}
 
 create_environment()
 {
@@ -302,11 +257,9 @@ fi
 # Download model
 ###############################################################################
 
-mkdir -p "${MODEL_DIR}"
-
-download_file config.json
-download_file model.xml
-download_file model.bin
+MODEL_DIR="${MODEL_DIR}" \
+EDGE_AI_COMMIT="${EDGE_AI_COMMIT}" \
+    "${SCRIPT_DIR}/download-pallet-model.sh"
 
 ###############################################################################
 # Export runtime
