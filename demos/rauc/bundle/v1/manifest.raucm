@@ -1,0 +1,10 @@
+[update]
+compatible=tear-demo-rauc
+version=1.0
+description=TEAR RAUC demo application v1
+
+[bundle]
+format=plain
+
+[image.appfs]
+filename=appfs.ext4
