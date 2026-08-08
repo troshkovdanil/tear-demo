@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd)"
 
 IMAGE_NAME="${IMAGE_NAME:-tear-demo-dlstreamer:2026.1-aarch64}"
+AARCH64_BUILD_SCRIPT="${AARCH64_BUILD_SCRIPT:-${SCRIPT_DIR}/build-aarch64.sh}"
+OPTEE_BUILD_SCRIPT="${OPTEE_BUILD_SCRIPT:-${SCRIPT_DIR}/build-optee-qemu.sh}"
 EDGE_AI_COMMIT="${EDGE_AI_COMMIT:-5ce5aa03c2fec59dd2e2bbde2153c30a5925b531}"
 OPTEE_QEMU_DIR="${OPTEE_QEMU_DIR:-${REPO_ROOT}/third_party/optee-qemu-v8}"
 TARGET="${TARGET:-${OPTEE_QEMU_DIR}/out-br/target}"
@@ -27,6 +29,14 @@ info() { printf '[INFO] %s\n' "$*"; }
 warn() { printf '[WARN] %s\n' "$*" >&2; }
 fatal() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
 
+run()
+{
+    printf '+'
+    printf ' %q' "$@"
+    printf '\n'
+    "$@"
+}
+
 [[ "$#" -eq 0 ]] || fatal "This script takes no command-line options"
 
 for name in BUILD_JOBS QEMU_MEMORY_MB QEMU_SMP DEMO_FRAMES \
@@ -43,9 +53,19 @@ for command_name in awk basename cp dirname docker find grep make mkdir \
 done
 
 docker info >/dev/null 2>&1 || fatal "Docker daemon is not accessible"
-docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1 || fatal "Docker image is missing: ${IMAGE_NAME}"
-[[ -d "${OPTEE_QEMU_DIR}" ]] || fatal "OP-TEE QEMU directory is missing: ${OPTEE_QEMU_DIR}"
-[[ -d "${TARGET}" ]] || fatal "Buildroot target directory is missing: ${TARGET}"
+
+[[ -x "${AARCH64_BUILD_SCRIPT}" ]] ||
+    fatal "AArch64 build script is missing or not executable: ${AARCH64_BUILD_SCRIPT}"
+[[ -x "${OPTEE_BUILD_SCRIPT}" ]] ||
+    fatal "OP-TEE build script is missing or not executable: ${OPTEE_BUILD_SCRIPT}"
+
+if ! docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
+    info "Docker image is missing; building it"
+    run "${AARCH64_BUILD_SCRIPT}"
+fi
+
+docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1 ||
+    fatal "AArch64 build completed but Docker image is still missing: ${IMAGE_NAME}"
 
 MODEL_DIR="${MODELS_SOURCE}/pallet_defect_detection" \
 EDGE_AI_COMMIT="${EDGE_AI_COMMIT}" \
@@ -414,10 +434,31 @@ install_runtime()
     info "Runtime and automated guest demo installed"
 }
 
+ensure_optee_qemu()
+{
+    if [[ -f "${OPTEE_QEMU_DIR}/build/Makefile" && -d "${TARGET}" ]]; then
+        info "Using existing OP-TEE QEMU checkout:"
+        info "  ${OPTEE_QEMU_DIR}"
+        return 0
+    fi
+
+    info "OP-TEE QEMU dependency is missing or incomplete; restoring it"
+    BUILD_JOBS="${BUILD_JOBS}" \
+    OPTEE_QEMU_DIR="${OPTEE_QEMU_DIR}" \
+        run "${OPTEE_BUILD_SCRIPT}" all
+
+    [[ -f "${OPTEE_QEMU_DIR}/build/Makefile" ]] ||
+        fatal "OP-TEE build Makefile is still missing after restore"
+    [[ -d "${TARGET}" ]] ||
+        fatal "Buildroot target is still missing after OP-TEE build: ${TARGET}"
+}
+
 rebuild_qemu()
 {
-    info "Rebuilding OP-TEE QEMU with ${BUILD_JOBS} jobs"
-    make -C "${OPTEE_QEMU_DIR}/build" -j "${BUILD_JOBS}" all
+    info "Rebuilding OP-TEE QEMU image after installing TEAR runtime"
+    BUILD_JOBS="${BUILD_JOBS}" \
+    OPTEE_QEMU_DIR="${OPTEE_QEMU_DIR}" \
+        run "${OPTEE_BUILD_SCRIPT}" all
 }
 
 run_qemu()
@@ -469,6 +510,7 @@ run_qemu()
 info "Removing cached runtime: ${RUNTIME_ROOT}"
 rm -rf "${RUNTIME_ROOT}"
 
+ensure_optee_qemu
 export_runtime
 install_runtime
 rebuild_qemu

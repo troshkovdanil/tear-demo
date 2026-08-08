@@ -6,12 +6,6 @@
 # Usage:
 #   ./scripts/run-power-save-mock-host.sh
 #
-# Force runtime re-export:
-#   RESET_RUNTIME=1 ./scripts/run-power-save-mock-host.sh
-#
-# Rebuild the Docker image first:
-#   REBUILD=1 ./scripts/run-power-save-mock-host.sh
-#
 
 set -Eeuo pipefail
 
@@ -41,11 +35,7 @@ WIDTH="${WIDTH:-640}"
 HEIGHT="${HEIGHT:-480}"
 DEVICE="${DEVICE:-CPU}"
 
-RESET_RUNTIME="${RESET_RUNTIME:-0}"
-REBUILD="${REBUILD:-0}"
-
 EXPECTED_MARKER="[TEAR] POWER_SAVE profile activated at frame 30"
-
 
 info()
 {
@@ -66,10 +56,9 @@ run()
     "$@"
 }
 
-
 create_environment()
 {
-    cat >"${RUNTIME_ROOT}/env.sh" <<'EOF'
+    cat >"${RUNTIME_ROOT}/env.sh" <<'ENVEOF'
 #!/usr/bin/env bash
 
 RUNTIME_ROOT="$(
@@ -99,28 +88,20 @@ prepend_path()
 
 prepend_path PATH \
     "${DLS_ROOT}/gstreamer/bin"
-
 prepend_path PATH \
     "${DLS_ROOT}/bin"
-
 prepend_path LD_LIBRARY_PATH \
     "${DLS_ROOT}/lib"
-
 prepend_path LD_LIBRARY_PATH \
     "${DLS_ROOT}/gstreamer/lib"
-
 prepend_path LD_LIBRARY_PATH \
     "${RUNTIME_ROOT}/usr/lib"
-
 prepend_path LD_LIBRARY_PATH \
     "${OPENVINO_PLUGIN_ROOT}"
-
 prepend_path LD_LIBRARY_PATH \
     "${RUNTIME_ROOT}/usr/lib/x86_64-linux-gnu"
-
 prepend_path LD_LIBRARY_PATH \
     "${OPENCV_ROOT}"
-
 prepend_path PYTHONPATH \
     "${DLS_ROOT}/python"
 
@@ -132,7 +113,7 @@ export GST_PLUGIN_PATH="$(
 
 export GST_PLUGIN_SYSTEM_PATH_1_0=""
 export GST_REGISTRY="${RUNTIME_ROOT}/gst-registry-x86_64.bin"
-EOF
+ENVEOF
 
     chmod +x "${RUNTIME_ROOT}/env.sh"
 
@@ -221,10 +202,8 @@ export_runtime()
 
 command -v docker >/dev/null 2>&1 ||
     fatal "docker was not found in PATH"
-
 command -v tar >/dev/null 2>&1 ||
     fatal "tar was not found in PATH"
-
 command -v ldd >/dev/null 2>&1 ||
     fatal "ldd was not found in PATH"
 
@@ -240,18 +219,16 @@ case "$(uname -m)" in
 esac
 
 ###############################################################################
-# Build image when requested or missing
+# Build image if missing
 ###############################################################################
-
-if [[ "${REBUILD}" == "1" ]]; then
-    info "Rebuilding Docker image"
-    run "${SCRIPT_DIR}/build-x86_64.sh"
-fi
 
 if ! docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
     info "Docker image is missing; building it"
     run "${SCRIPT_DIR}/build-x86_64.sh"
 fi
+
+docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1 ||
+    fatal "x86-64 build completed but Docker image is still missing: ${IMAGE_NAME}"
 
 ###############################################################################
 # Download model
@@ -265,16 +242,11 @@ EDGE_AI_COMMIT="${EDGE_AI_COMMIT}" \
 # Export runtime
 ###############################################################################
 
-if [[ "${RESET_RUNTIME}" == "1" ]]; then
-    rm -rf "${RUNTIME_ROOT}"
-fi
+info "Removing cached host runtime:"
+info "  ${RUNTIME_ROOT}"
+rm -rf "${RUNTIME_ROOT}"
 
-if [[ ! -f "${RUNTIME_ROOT}/env.sh" ]]; then
-    export_runtime
-else
-    info "Using cached host runtime:"
-    info "  ${RUNTIME_ROOT}"
-fi
+export_runtime
 
 ###############################################################################
 # Load isolated exported environment
@@ -282,7 +254,6 @@ fi
 
 # shellcheck source=/dev/null
 source "${RUNTIME_ROOT}/env.sh"
-
 rm -f "${GST_REGISTRY}"
 
 GST_LAUNCH="${RUNTIME_ROOT}/opt/intel/dlstreamer/gstreamer/bin/gst-launch-1.0"
@@ -309,34 +280,21 @@ grep -aqF "POWER_SAVE profile activated" \
     fatal "POWER_SAVE marker is absent from exported libgstvideoanalytics.so"
 
 info "Checking videoanalytics shared-library dependencies"
-
-missing_dependencies="$(
-    ldd "${VIDEOANALYTICS_LIB}" |
-        awk '/not found/ { print }'
-)"
-
+missing_dependencies="$(ldd "${VIDEOANALYTICS_LIB}" | awk '/not found/ { print }')"
 if [[ -n "${missing_dependencies}" ]]; then
     printf '%s\n' "${missing_dependencies}" >&2
     fatal "The exported videoanalytics plugin has unresolved dependencies"
 fi
 
 info "Checking OpenVINO CPU plugin dependencies"
-
-missing_cpu_dependencies="$(
-    ldd "${OPENVINO_CPU_PLUGIN}" |
-        awk '/not found/ { print }'
-)"
-
+missing_cpu_dependencies="$(ldd "${OPENVINO_CPU_PLUGIN}" | awk '/not found/ { print }')"
 if [[ -n "${missing_cpu_dependencies}" ]]; then
     printf '%s\n' "${missing_cpu_dependencies}" >&2
     fatal "The exported OpenVINO CPU plugin has unresolved dependencies"
 fi
 
 info "Checking gvadetect plugin"
-
-inspect_output="$(
-    "${GST_INSPECT}" gvadetect 2>&1
-)" || {
+inspect_output="$("${GST_INSPECT}" gvadetect 2>&1)" || {
     printf '%s\n' "${inspect_output}" >&2
     fatal "gvadetect could not be loaded on the host"
 }
@@ -375,11 +333,9 @@ info "  Input:       ${INPUT_FPS} FPS"
 info "  Buffers:     ${NUM_BUFFERS}"
 info "  Transition:  frame 30"
 info "  Log:         ${LOG_FILE}"
-
 printf '\n'
 
 set +e
-
 GST_DEBUG=2 \
 "${GST_LAUNCH}" -v \
     videotestsrc \
@@ -396,19 +352,15 @@ GST_DEBUG=2 \
         sync=false \
     2>&1 |
     tee "${LOG_FILE}"
-
 pipeline_status=${PIPESTATUS[0]}
-
 set -e
 
 if [[ "${pipeline_status}" -ne 0 ]]; then
     fatal "Host pipeline failed with status ${pipeline_status}; see ${LOG_FILE}"
 fi
-
 if ! grep -Fq "${EXPECTED_MARKER}" "${LOG_FILE}"; then
     fatal "POWER_SAVE transition was not observed; see ${LOG_FILE}"
 fi
-
 if ! grep -Fq 'Got EOS from element' "${LOG_FILE}"; then
     fatal "Host pipeline did not reach EOS; see ${LOG_FILE}"
 fi
