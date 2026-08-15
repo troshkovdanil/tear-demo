@@ -23,9 +23,6 @@ APPFS_B_IMAGE="${RUNTIME_DIR}/appfs-b.ext4"
 CONFIG="${RUNTIME_DIR}/system.conf"
 SERVICE_LOG="${RUNTIME_DIR}/rauc-service.log"
 
-MOUNT_A="${RUNTIME_DIR}/mnt-a"
-MOUNT_B="${RUNTIME_DIR}/mnt-b"
-
 ROOTFS_SIZE_MB=8
 
 LOOP_ROOTFS_A=""
@@ -34,34 +31,22 @@ LOOP_APPFS_A=""
 LOOP_APPFS_B=""
 
 RAUC_SERVICE_PID=""
-
 SYSTEM_RAUC_WAS_ACTIVE=0
+
 
 cleanup()
 {
+    local exit_code=$?
+
     set +e
 
     echo
     echo "[rauc-demo] Cleaning up..."
 
-    if mountpoint -q "${MOUNT_A}" 2>/dev/null; then
-        sudo umount "${MOUNT_A}"
-    fi
-
-    if mountpoint -q "${MOUNT_B}" 2>/dev/null; then
-        sudo umount "${MOUNT_B}"
-    fi
-
     if [[ -n "${RAUC_SERVICE_PID}" ]]; then
         sudo kill "${RAUC_SERVICE_PID}" >/dev/null 2>&1 || true
-
-        for _ in $(seq 1 20); do
-            if ! sudo kill -0 "${RAUC_SERVICE_PID}" >/dev/null 2>&1; then
-                break
-            fi
-
-            sleep 0.1
-        done
+        wait "${RAUC_SERVICE_PID}" >/dev/null 2>&1 || true
+        RAUC_SERVICE_PID=""
     fi
 
     for dev in \
@@ -79,9 +64,11 @@ cleanup()
         echo "[rauc-demo] Restoring system RAUC service..."
         sudo systemctl start rauc.service >/dev/null 2>&1 || true
     fi
+
+    exit "${exit_code}"
 }
 
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 
 require_command()
@@ -95,13 +82,23 @@ require_command()
 }
 
 
+read_ext4_file()
+{
+    local device="$1"
+    local path="$2"
+
+    sudo debugfs \
+        -R "cat ${path}" \
+        "${device}" \
+        2>/dev/null
+}
+
+
 for command in \
     rauc \
     losetup \
-    mount \
-    umount \
-    mountpoint \
     truncate \
+    debugfs \
     systemctl
 do
     require_command "${command}"
@@ -128,22 +125,44 @@ if [[ ! -f "${CERT}" ]]; then
 fi
 
 
+#
+# Previous runs must have detached their loop devices before this point.
+# Do not recursively remove a directory containing mounted filesystems.
+#
+
+if [[ -d "${RUNTIME_DIR}" ]]; then
+    while read -r loop_device backing_file; do
+        if [[ "${backing_file}" == "${RUNTIME_DIR}"/* ]]; then
+            echo "error: stale loop device detected:" >&2
+            echo "  ${loop_device} -> ${backing_file}" >&2
+            echo >&2
+            echo "run:" >&2
+            echo "  ./scripts/clean.sh" >&2
+            exit 1
+        fi
+    done < <(
+        losetup \
+            --list \
+            --noheadings \
+            --output NAME,BACK-FILE
+    )
+fi
+
+
 echo "[rauc-demo] Preparing runtime directory..."
 
 rm -rf "${RUNTIME_DIR}"
 
 mkdir -p \
     "${RUNTIME_DIR}" \
-    "${MOUNT_A}" \
-    "${MOUNT_B}" \
     "${RUNTIME_DIR}/rauc-data"
 
 
 #
-# Create two dummy bootable parent slots.
+# Dummy bootable parent slots.
 #
-# RAUC will not install anything into these because our bundle contains
-# only an appfs image. They exist to model the normal A/B slot groups.
+# The bundle contains no rootfs image, so RAUC does not write these.
+# They exist only to model the normal A/B slot relationship.
 #
 
 echo "[rauc-demo] Creating dummy rootfs A/B images..."
@@ -158,7 +177,7 @@ truncate \
 
 
 #
-# Both application slots initially contain version 1.
+# Both application slots start from application version 1.
 #
 
 echo "[rauc-demo] Creating appfs A/B from application v1..."
@@ -173,7 +192,7 @@ cp \
 
 
 #
-# Attach all four images as block devices.
+# Expose the image files as real Linux block devices.
 #
 
 echo "[rauc-demo] Attaching loop devices..."
@@ -206,6 +225,7 @@ LOOP_APPFS_B="$(
         "${APPFS_B_IMAGE}"
 )"
 
+
 echo
 echo "rootfs A: ${LOOP_ROOTFS_A}"
 echo "appfs  A: ${LOOP_APPFS_A}"
@@ -214,14 +234,7 @@ echo "appfs  B: ${LOOP_APPFS_B}"
 
 
 #
-# RAUC configuration.
-#
-# A and B are bootable parent slots.
-# Each appfs belongs to its corresponding rootfs.
-#
-# We use bootloader=noop because the host demo has no real bootloader.
-# activate-installed=false prevents this mock demo from pretending that
-# it actually switched a hardware bootloader after installation.
+# A/B RAUC configuration.
 #
 
 cat > "${CONFIG}" <<EOF
@@ -263,39 +276,32 @@ cat "${CONFIG}"
 
 
 #
-# Verify initial contents.
+# Read both ext4 filesystems directly.
+# No mount is necessary.
 #
 
 echo
 echo "[rauc-demo] Checking application slots before update..."
 
-sudo mount \
-    "${LOOP_APPFS_A}" \
-    "${MOUNT_A}"
-
-sudo mount \
-    "${LOOP_APPFS_B}" \
-    "${MOUNT_B}"
-
 VERSION_A_BEFORE="$(
-    cat "${MOUNT_A}/www/version"
+    read_ext4_file \
+        "${LOOP_APPFS_A}" \
+        "/www/version"
 )"
 
 VERSION_B_BEFORE="$(
-    cat "${MOUNT_B}/www/version"
+    read_ext4_file \
+        "${LOOP_APPFS_B}" \
+        "/www/version"
 )"
 
 echo
 echo "appfs A: ${VERSION_A_BEFORE}"
 echo "appfs B: ${VERSION_B_BEFORE}"
 
-sudo umount "${MOUNT_A}"
-sudo umount "${MOUNT_B}"
-
 
 #
-# We want our explicitly configured service, not Ubuntu's normally
-# D-Bus-activated service using /etc/rauc/system.conf.
+# Avoid colliding with Ubuntu's normal D-Bus-activated RAUC service.
 #
 
 if systemctl is-active --quiet rauc.service; then
@@ -309,8 +315,7 @@ fi
 
 
 #
-# Start a real RAUC service and explicitly tell it that slot A is the
-# currently booted slot.
+# Start a real RAUC service and tell it that A is currently booted.
 #
 
 echo
@@ -327,10 +332,12 @@ RAUC_SERVICE_PID=$!
 
 
 #
-# Give the service a moment to acquire its D-Bus name.
+# Wait until the service is actually available through D-Bus.
 #
 
-for _ in $(seq 1 30); do
+SERVICE_READY=0
+
+for _ in $(seq 1 50); do
     if ! sudo kill -0 "${RAUC_SERVICE_PID}" >/dev/null 2>&1; then
         echo
         echo "error: RAUC service terminated unexpectedly" >&2
@@ -340,15 +347,18 @@ for _ in $(seq 1 30); do
     fi
 
     if sudo rauc status >/dev/null 2>&1; then
+        SERVICE_READY=1
         break
     fi
 
-    sleep 0.2
+    sleep 0.1
 done
 
 
-if ! sudo kill -0 "${RAUC_SERVICE_PID}" >/dev/null 2>&1; then
-    echo "error: RAUC service failed to start" >&2
+if [[ "${SERVICE_READY}" -ne 1 ]]; then
+    echo
+    echo "error: RAUC service did not become ready" >&2
+    echo >&2
     cat "${SERVICE_LOG}" >&2
     exit 1
 fi
@@ -362,7 +372,7 @@ sudo rauc status
 
 
 #
-# Verify the bundle before installation.
+# Independent bundle inspection/signature verification.
 #
 
 echo
@@ -376,10 +386,11 @@ rauc \
 
 
 #
-# Perform a normal RAUC install through the running service.
+# Normal RAUC installation through the running service.
 #
-# Because A is active, RAUC must choose the inactive group B.
-# The bundle contains only image.appfs, therefore appfs.1 is updated.
+# A is active.
+# Therefore group B is the inactive target.
+# The bundle contains image.appfs only, so RAUC writes appfs.1.
 #
 
 echo
@@ -399,40 +410,35 @@ sudo rauc status
 
 
 #
-# Stop the RAUC service before mounting and inspecting the devices.
+# Stop RAUC before inspecting the updated filesystem.
 #
 
 echo
 echo "[rauc-demo] Stopping RAUC service..."
 
 sudo kill "${RAUC_SERVICE_PID}"
-
 wait "${RAUC_SERVICE_PID}" 2>/dev/null || true
 
 RAUC_SERVICE_PID=""
 
 
 #
-# Inspect both filesystems.
+# Inspect both ext4 filesystems without mounting them.
 #
 
 echo
 echo "[rauc-demo] Checking application slots after update..."
 
-sudo mount \
-    "${LOOP_APPFS_A}" \
-    "${MOUNT_A}"
-
-sudo mount \
-    "${LOOP_APPFS_B}" \
-    "${MOUNT_B}"
-
 VERSION_A_AFTER="$(
-    cat "${MOUNT_A}/www/version"
+    read_ext4_file \
+        "${LOOP_APPFS_A}" \
+        "/www/version"
 )"
 
 VERSION_B_AFTER="$(
-    cat "${MOUNT_B}/www/version"
+    read_ext4_file \
+        "${LOOP_APPFS_B}" \
+        "/www/version"
 )"
 
 echo
@@ -444,16 +450,34 @@ echo
 echo "[rauc-demo] HTTP content:"
 echo
 echo "--- A ---"
-cat "${MOUNT_A}/www/index.html"
+
+read_ext4_file \
+    "${LOOP_APPFS_A}" \
+    "/www/index.html"
 
 echo
 echo "--- B ---"
-cat "${MOUNT_B}/www/index.html"
+
+read_ext4_file \
+    "${LOOP_APPFS_B}" \
+    "/www/index.html"
 
 
 #
-# Verify expected result.
+# Validate the actual result.
 #
+
+if [[ "${VERSION_A_BEFORE}" != "1.0" ]]; then
+    echo
+    echo "error: appfs A did not start at version 1.0" >&2
+    exit 1
+fi
+
+if [[ "${VERSION_B_BEFORE}" != "1.0" ]]; then
+    echo
+    echo "error: appfs B did not start at version 1.0" >&2
+    exit 1
+fi
 
 if [[ "${VERSION_A_AFTER}" != "1.0" ]]; then
     echo
@@ -485,4 +509,3 @@ echo "  appfs B = ${VERSION_B_AFTER}"
 echo
 echo "RAUC correctly preserved active slot A and installed"
 echo "the signed v2 application image into inactive slot B."
-echo
